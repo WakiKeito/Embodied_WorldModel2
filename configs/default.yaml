@@ -1,0 +1,8 @@
+# 乱数シード
+seed: 0
+# 実行デバイス（例: cpu, cuda:0）
+device: "cpu"
+# プロジェクトのルートパス（相対パス）
+project_root: "."
+# データセットのルートパス（相対パス）
+dataset_root: "datasets"

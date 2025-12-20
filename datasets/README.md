@@ -1,27 +1,71 @@
-# Datasets
+# データセット
 
-This folder stores NPZ files for experiments. Each dataset must document its
-keys, shapes, dtypes, and meaning before it is used in training or evaluation.
+このREADMEは、本リポジトリで使用するNPZデータセット形式の唯一の正の仕様書です。
+各ファイルは1エピソードに対応し、下記のキーを固定されたshapeと意味で必ず含めます。
 
-## NPZ Schema Template
+## エピソードNPZ仕様
 
-- file: <name>.npz
-- description: <short description of how the dataset was collected>
-- total_frames: <int>
-- time_step_sec: <float, sampling interval>
+すべての配列は時間次元Tでインデックスされます。RGB観測の空間解像度は64x64に固定します。
+Jは関節数、Aは行動次元であり、いずれもデータセット内で固定し、全エピソードで一致させます。
 
-### Keys
+### 必須キー
 
-| key | shape | dtype | description | note |
-| --- | ----- | ----- | ----------- | ---- |
-| obs_rgb | (T, H, W, 3) | uint8 | RGB image sequence | values in [0, 255] |
-| obs_depth | (T, H, W) | float32 | Depth image sequence | meters |
-| action | (T, A) | float32 | Action vector | normalized to [-1, 1] |
-| reward | (T,) | float32 | Reward per step | optional |
-| done | (T,) | bool | Episode termination flags | optional |
+| key | shape | dtype | 時系列 | 説明 |
+| --- | ----- | ----- | ------ | ---- |
+| rgb | (T, 64, 64, 3) | uint8 または float32 | はい | RGB観測の時系列。 |
+| q | (T, J) | float32 | はい | 関節角度（関節位置）。 |
+| dq | (T, J) | float32 | はい | 関節角速度。 |
+| f | (T, J) | float32 | はい | 関節の力/トルク。 |
+| action | (T, A) | float32 | はい | 各時刻の制御入力。 |
+| block_pose | (T, 7) | float32 | はい | ブロックの姿勢 (x, y, z, qw, qx, qy, qz)。 |
+| mass | () | float32 | いいえ | 物体の質量（エピソード内一定のスカラー）。 |
+| friction | () | float32 | いいえ | 接触摩擦係数（エピソード内一定のスカラー）。 |
 
-### Notes
+### 各キーの詳細
 
-- T is the time dimension (number of frames).
-- H and W must be consistent across all samples.
-- If a key is optional, explicitly state when it is missing.
+- rgb: 各時刻のRGB観測。
+  - dtype: uint8（0-255）または float32。
+  - shape: (T, 64, 64, 3)。
+  - 正規化: float32の場合は[0.0, 1.0]、uint8の場合は生ピクセル。
+  - 時系列: はい、長さT。
+- q: ロボットの関節角度（関節位置）。
+  - dtype: float32。
+  - shape: (T, J)。
+  - 正規化: なし。物理単位（例: rad, m）。
+  - 時系列: はい、長さT。
+- dq: ロボットの関節角速度。
+  - dtype: float32。
+  - shape: (T, J)。
+  - 正規化: なし。物理単位（例: rad/s）。
+  - 時系列: はい、長さT。
+- f: 観測または適用された関節力/トルク。
+  - dtype: float32。
+  - shape: (T, J)。
+  - 正規化: なし。物理単位（例: N, Nm）。
+  - 時系列: はい、長さT。
+- action: エージェント/コントローラが出力した行動ベクトル。
+  - dtype: float32。
+  - shape: (T, A)。
+  - 正規化: データセット定義。正規化する場合は[-1, 1]に格納。
+  - 時系列: はい、長さT。
+- block_pose: ワールド座標系でのブロック姿勢。
+  - dtype: float32。
+  - shape: (T, 7)。
+  - 正規化: なし。位置はm、クォータニオンは単位ノルム。
+  - 時系列: はい、長さT。
+- mass: エピソードの物体質量。
+  - dtype: float32。
+  - shape: ()。
+  - 正規化: なし。kg単位で保存。
+  - 時系列: いいえ、エピソード内一定のスカラー。
+- friction: エピソードの接触摩擦係数。
+  - dtype: float32。
+  - shape: ()。
+  - 正規化: なし。係数をそのまま保存。
+  - 時系列: いいえ、エピソード内一定のスカラー。
+
+### 制約
+
+- すべての必須キーは各エピソードNPZに必ず存在すること。
+- Tはエピソードごとに変わってもよいが、時系列キーは同一のTを共有すること。
+- JとAはデータセット内で固定し、全エピソードで一致させること。

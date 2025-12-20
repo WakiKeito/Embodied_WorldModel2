@@ -1,3 +1,3 @@
-# Scripts
+# スクリプト
 
-This folder holds entry-point scripts for data processing and experiments.
+データ処理や実験用の実行スクリプトを配置します。

@@ -1,0 +1,71 @@
+# push_block NPZエピソード用データセット設定
+name: "push_block_npz"
+
+# 使用するシーケンス長T
+sequence_length: 64
+# フレームの間引き率（1なら全フレーム）
+frame_skip: 1
+# 収録時のフレームレート（Hz）
+fps: 30
+
+# NPZに含まれるキー定義
+keys:
+  # RGB観測
+  rgb:
+    shape: ["T", 64, 64, 3]
+    dtype: "uint8_or_float32"
+    normalize: false
+  # 関節角度
+  q:
+    shape: ["T", "J"]
+    dtype: "float32"
+    normalize: true
+  # 関節角速度
+  dq:
+    shape: ["T", "J"]
+    dtype: "float32"
+    normalize: true
+  # 関節の力/トルク
+  f:
+    shape: ["T", "J"]
+    dtype: "float32"
+    normalize: true
+  # 行動ベクトル
+  action:
+    shape: ["T", "A"]
+    dtype: "float32"
+    normalize: true
+    normalize_range: [-1.0, 1.0]
+  # ブロック姿勢
+  block_pose:
+    shape: ["T", 7]
+    dtype: "float32"
+    normalize: false
+  # 質量（エピソード内一定）
+  mass:
+    shape: []
+    dtype: "float32"
+    normalize: false
+  # 摩擦係数（エピソード内一定）
+  friction:
+    shape: []
+    dtype: "float32"
+    normalize: false
+
+# 正規化の設定
+normalization:
+  # 正規化を有効化するか
+  enabled: false
+  # RGBのスケール（使用しない場合は1.0）
+  rgb_scale: 1.0
+  # actionのスケール（使用しない場合は1.0）
+  action_scale: 1.0
+  # qの平均/標準偏差（次元Jに合わせて記述）
+  q_mean: 0.0
+  q_std: 1.0
+  # dqの平均/標準偏差（次元Jに合わせて記述）
+  dq_mean: 0.0
+  dq_std: 1.0
+  # fの平均/標準偏差（次元Jに合わせて記述）
+  f_mean: 0.0
+  f_std: 1.0

@@ -1,3 +1,3 @@
-# Configs
+# 設定
 
-This folder holds experiment configuration files (YAML/TOML), grouped by task.
+実験設定ファイル（YAML/TOML）をタスク単位で配置します。
