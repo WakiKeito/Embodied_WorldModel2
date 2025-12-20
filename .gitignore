@@ -9,3 +9,4 @@ datasets/*.npz
 
 # OS
 .DS_Store
+outputs/
