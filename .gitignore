@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Data
+datasets/*.npz
+
+# OS
+.DS_Store

@@ -1,0 +1,9 @@
+[project]
+name = "embodied-worldmodel"
+version = "0.0.0"
+description = "Minimal prototype scaffold for embodied world model research"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool]
+# Add tool configuration here when the project grows.
