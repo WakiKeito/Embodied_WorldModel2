@@ -83,11 +83,19 @@ class WorldModelVP(nn.Module):
 
 
     def compute_loss(self, batch: Dict[str, torch.Tensor]):
-        outputs = self.forward(batch)
+        has_batch = batch["q"].dim() == 3
+        batch_in: Dict[str, torch.Tensor] = {}
+        for key, value in batch.items():
+            if torch.is_tensor(value) and value.dim() in {2, 4}:
+                batch_in[key] = value.unsqueeze(0)
+            else:
+                batch_in[key] = value
 
-        q, has_batch = _ensure_batch_time(batch["q"])
-        dq, _ = _ensure_batch_time(batch["dq"])
-        block_pose, _ = _ensure_batch_time(batch["block_pose"])
+        outputs = self.forward(batch_in)
+
+        q = batch_in["q"]
+        dq = batch_in["dq"]
+        block_pose = batch_in["block_pose"]
 
         q_target = q[:, 1:]
         dq_target = dq[:, 1:]
@@ -191,18 +199,3 @@ def _ensure_batch_time(x: torch.Tensor) -> Tuple[torch.Tensor, bool]:
     if x.dim() in {2, 4}:
         return x.unsqueeze(0), False
     return x, True
-
-@torch.no_grad()
-def predict_step(
-    self,
-    h_t: torch.Tensor,
-    emb_t: torch.Tensor,
-    action_t: torch.Tensor,
-) -> torch.Tensor:
-    """
-    1-step dynamics:
-      h_{t+1} = f(h_t, [emb_t, action_t])
-    """
-    x = torch.cat([emb_t, action_t], dim=-1)
-    h_next = self.dynamics.forward_step(x, h_t)
-    return h_next

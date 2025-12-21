@@ -21,7 +21,8 @@ def main():
     parser.add_argument("--dataset-root", type=Path, default=Path("datasets/raw"))
     parser.add_argument("--horizon", type=int, default=30)
     parser.add_argument("--use-force", action="store_true")
-    parser.add_argument("--out", type=Path, default=Path("outputs/genmap_rollout.csv"))
+    parser.add_argument("--out", type=Path, default=Path("outputs/genmap.csv"))
+    parser.add_argument("--ckpt", type=Path, required=True)
     args = parser.parse_args()
 
     npz_files = sorted(args.dataset_root.glob("*.npz"))
@@ -45,6 +46,9 @@ def main():
         model = WorldModelVP(j_dim=j_dim, action_dim=action_dim).to(device)
         print("[INFO] Using VP")
 
+    ckpt = torch.load(args.ckpt, map_location=device)
+    state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+    model.load_state_dict(state, strict=True)
     model.eval()
 
     # (mass, friction) -> list of metrics
@@ -62,7 +66,12 @@ def main():
         preds = rollout(model, batch, horizon=args.horizon)
 
         # GT: t=1..H
-        q_gt = batch["q"][:, 1:args.horizon + 1]
+        T = batch["q"].shape[1]
+        H = min(args.horizon, T - 1)
+        q_gt = batch["q"][:, 1:1+H]
+        block_gt = batch["block_pose"][:, 1:1+H]
+        preds = rollout(model, batch, horizon=H)
+
         block_gt = batch["block_pose"][:, 1:args.horizon + 1]
 
         rmse_q = rmse(preds["q_hat"], q_gt)
