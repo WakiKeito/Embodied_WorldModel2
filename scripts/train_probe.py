@@ -116,6 +116,13 @@ def main():
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--out", type=Path, default=Path("outputs/probe_metrics.txt"))
     parser.add_argument("--ckpt", type=Path, required=True)
+    parser.add_argument(
+        "--save-probe",
+        type=Path,
+        default=None,
+        help="学習済み probe の state_dict を保存するパス（任意）",
+    )
+
     args = parser.parse_args()
 
     npz_files = sorted(args.dataset_root.glob("*.npz"))
@@ -151,7 +158,7 @@ def main():
         wm = WorldModelVP(j_dim=j_dim, action_dim=action_dim).to(device)
         print("[INFO] Probe on VP latent")
 
-    ckpt = torch.load(args.ckpt, map_location=device)
+    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     wm.load_state_dict(state, strict=True)
     wm.eval()
@@ -221,6 +228,22 @@ def main():
     args.out.write_text(out_str + "\n", encoding="utf-8")
     print("\n" + out_str)
     print(f"[OK] saved: {args.out}")
+
+    if args.save_probe is not None:
+        args.save_probe.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "model": probe.state_dict(),
+                "in_dim": int(X_tr.shape[1]),
+                "out_dim": 2,
+                "rep_mode": args.rep_mode,
+                "use_force": args.use_force,
+            },
+            args.save_probe,
+        )
+
+        print(f"[OK] saved probe: {args.save_probe}")
+
 
 
 if __name__ == "__main__":

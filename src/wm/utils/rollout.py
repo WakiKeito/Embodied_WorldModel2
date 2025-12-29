@@ -2,7 +2,8 @@ import torch
 from typing import Dict
 
 @torch.no_grad()
-def rollout(model, batch: Dict[str, torch.Tensor], horizon: int) -> Dict[str, torch.Tensor]:
+def rollout(model, batch, horizon: int = 30, h0: torch.Tensor | None = None):
+
     """
     Open-loop rollout (teacher forcing なし).
     VP/VPF 両対応。
