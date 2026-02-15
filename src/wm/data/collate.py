@@ -1,3 +1,4 @@
+#collate.py
 """固定長エピソードの単純なcollate関数。"""
 
 from __future__ import annotations

@@ -1,0 +1,198 @@
+{
+  "split": "test_intrap",
+  "out_ok_dir": "datasets/test_intrap",
+  "out_bad_dir": "datasets/test_intrap/_bad",
+  "policy": "fixed",
+  "control_hz": 10,
+  "T": 80,
+  "push_mode": "vel",
+  "push_ee_speed": 0.03,
+  "require_ok_per_condition": 1,
+  "conditions": [
+    [
+      0.65,
+      0.275
+    ],
+    [
+      0.65,
+      0.425
+    ],
+    [
+      0.65,
+      0.575
+    ],
+    [
+      0.65,
+      0.725
+    ],
+    [
+      1.0,
+      0.275
+    ],
+    [
+      1.0,
+      0.425
+    ],
+    [
+      1.0,
+      0.575
+    ],
+    [
+      1.0,
+      0.725
+    ],
+    [
+      1.4,
+      0.275
+    ],
+    [
+      1.4,
+      0.425
+    ],
+    [
+      1.4,
+      0.575
+    ],
+    [
+      1.4,
+      0.725
+    ]
+  ],
+  "good_count": 12,
+  "bad_count": 0,
+  "attempt_count": 12,
+  "per_condition": [
+    {
+      "mass": 0.65,
+      "friction": 0.275,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 0.65,
+      "friction": 0.425,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 0.65,
+      "friction": 0.575,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 0.65,
+      "friction": 0.725,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 1.0,
+      "friction": 0.275,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 1.0,
+      "friction": 0.425,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 1.0,
+      "friction": 0.575,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 1.0,
+      "friction": 0.725,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 1.4,
+      "friction": 0.275,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 1.4,
+      "friction": 0.425,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 1.4,
+      "friction": 0.575,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    },
+    {
+      "mass": 1.4,
+      "friction": 0.725,
+      "ok_existing": 0,
+      "ok_added": 1,
+      "bad_added": 0,
+      "attempts": 1,
+      "done": true
+    }
+  ],
+  "gui": false,
+  "push_height_mode": "side",
+  "ik_fixed_orn": true,
+  "block_x": 0.6,
+  "block_y": 0.0,
+  "ee_start_backoff": 0.33,
+  "approach_z_high": 0.2,
+  "init_noise_mode": "block",
+  "noise_block_xy": 0.003,
+  "release_steps": 40,
+  "release_pos_gain": 1.2,
+  "release_max_vel": 6.0,
+  "release_force": 2000.0,
+  "release_start_iters": 3,
+  "kick_steps": 0,
+  "kick_multiplier": 3.0,
+  "use_force_target": false,
+  "use_air_force": false,
+  "air_force_steps": 30,
+  "air_force_fx": 2.0,
+  "air_z_lift": 0.15,
+  "air_force_start_t": 0,
+  "air_force_after_release_offset": 20,
+  "air_zero_gravity": true
+}

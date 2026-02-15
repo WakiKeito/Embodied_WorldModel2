@@ -1,249 +1,453 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Probe: world model の latent から mass / friction を回帰する。
+train_probe.py (fast, accuracy-preserving)
 
-- VP / VPF を切り替え可能
-- h_seq -> h_rep (mean/last)
-- 線形回帰（ridgeなしの最小）を PyTorch で実装
-- 指標: RMSE / MAE / R2
-- まず「動く」こと優先（世界モデルの学習済み重みが無くても動く）
+Speedups (no accuracy loss):
+1) Faster DataLoader (num_workers, pin_memory, persistent_workers, prefetch)
+2) Optional latent caching:
+   - Precompute h_summary (mean/last) for all episodes once using the frozen world model
+   - Train linear probe only on cached features (fast)
+
+Normalization:
+- same logic as your fixed version:
+  1) --norm-cfg
+  2) ckpt["norm_cfg"]
+  3) <ckpt_dir>/norm_cfg.json
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split, TensorDataset
 
 from wm.data.dataset_npz import EpisodeNPZDataset
 from wm.data.collate import collate_fixed_length
 from wm.models.world_model import WorldModelVP, WorldModelVPF
-from analysis.summarize_latent import summarize_latent
 
 
-def split_indices(n: int, val_ratio: float, seed: int) -> Tuple[List[int], List[int]]:
-    rng = np.random.default_rng(seed)
-    idx = np.arange(n)
-    rng.shuffle(idx)
-    n_val = max(1, int(n * val_ratio))
-    val_idx = idx[:n_val].tolist()
-    tr_idx = idx[n_val:].tolist()
-    return tr_idx, val_idx
+# -------------------------
+# norm cfg helpers
+# -------------------------
+def _load_json(p: Path) -> Dict:
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
-def to_device(batch: Dict, device: torch.device) -> Dict:
-    out = {}
-    for k, v in batch.items():
-        out[k] = v.to(device) if torch.is_tensor(v) else v
-    return out
+def load_norm_cfg(norm_cfg_path: Optional[str], ckpt_path: str) -> Optional[Dict]:
+    ckpt_p = Path(ckpt_path)
+
+    if norm_cfg_path:
+        p = Path(norm_cfg_path)
+        if not p.exists():
+            raise FileNotFoundError(f"--norm-cfg not found: {p}")
+        return _load_json(p)
+
+    ck = torch.load(ckpt_p, map_location="cpu", weights_only=False)
+    if isinstance(ck, dict) and "norm_cfg" in ck and isinstance(ck["norm_cfg"], dict):
+        return ck["norm_cfg"]
+
+    cand = ckpt_p.parent / "norm_cfg.json"
+    if cand.exists():
+        return _load_json(cand)
+
+    return None
 
 
-def rmse(y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    return torch.mean((y_hat - y) ** 2).sqrt()
+def build_dataset_cfg(seq_len: int, frame_skip: int, norm_cfg: Optional[Dict]) -> Dict:
+    cfg = {
+        "sequence_length": int(seq_len),
+        "frame_skip": int(frame_skip),
+        "keys": {},
+    }
+    if norm_cfg is not None:
+        cfg["normalization"] = norm_cfg
+    return cfg
 
 
-def mae(y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    return torch.mean(torch.abs(y_hat - y))
-
-
-def r2_score(y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    # y, y_hat: (N, D)
-    y_mean = y.mean(dim=0, keepdim=True)
-    ss_res = torch.sum((y - y_hat) ** 2, dim=0)
-    ss_tot = torch.sum((y - y_mean) ** 2, dim=0) + 1e-12
-    return 1.0 - ss_res / ss_tot
+# -------------------------
+# model / probe
+# -------------------------
+def summarize_latent(h_seq: torch.Tensor, mode: str) -> torch.Tensor:
+    """
+    h_seq: (B, T-1, H)
+    returns: (B, H)
+    """
+    if mode == "mean":
+        return h_seq.mean(dim=1)
+    if mode == "last":
+        return h_seq[:, -1]
+    raise ValueError(f"unknown rep-mode: {mode}")
 
 
 class LinearProbe(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int = 2):
+    def __init__(self, h_dim: int):
         super().__init__()
-        self.lin = nn.Linear(in_dim, out_dim)
+        self.lin = nn.Linear(h_dim, 2)  # [mass, friction]
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         return self.lin(x)
 
 
+# -------------------------
+# latent cache
+# -------------------------
 @torch.no_grad()
-def extract_latent_and_targets(
-    model,
-    loader: DataLoader,
+def build_latent_cache(
+    wm: nn.Module,
+    dl: DataLoader,
     device: torch.device,
     rep_mode: str,
+    save_path: Path,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
+    Compute h_summary for all batches in dl and save to disk.
     Returns:
-        X: (N, H) latent reps
-        Y: (N, 2) targets [mass, friction]
+      X: (N, Hdim)
+      Y: (N, 2)  [mass, friction]
     """
-    X_list, Y_list = [], []
+    wm.eval()
 
-    model.eval()
+    xs = []
+    ys = []
 
-    for batch in loader:
-        batch = to_device(batch, device)
+    for batch in dl:
+        batch = {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in batch.items()}
+        out = wm(batch)
+        h = summarize_latent(out["h_seq"], mode=rep_mode)  # (B,Hdim)
 
-        outputs = model(batch)  # outputs["h_seq"] exists
-        h_seq = outputs["h_seq"]  # (B,T,H)
+        y = torch.stack([batch["mass"].float(), batch["friction"].float()], dim=1)  # (B,2)
 
-        h_rep = summarize_latent(h_seq, mode=rep_mode)  # (B,H)
+        xs.append(h.detach().cpu())
+        ys.append(y.detach().cpu())
 
-        mass = batch["mass"].view(-1, 1).float()
-        friction = batch["friction"].view(-1, 1).float()
-        y = torch.cat([mass, friction], dim=1)  # (B,2)
+    X = torch.cat(xs, dim=0)
+    Y = torch.cat(ys, dim=0)
 
-        X_list.append(h_rep.detach().cpu())
-        Y_list.append(y.detach().cpu())
-
-    X = torch.cat(X_list, dim=0)
-    Y = torch.cat(Y_list, dim=0)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "X": X,
+            "Y": Y,
+            "rep_mode": rep_mode,
+        },
+        save_path,
+    )
+    print(f"[OK] saved latent cache: {save_path}  (N={X.shape[0]}, Hdim={X.shape[1]})")
     return X, Y
 
 
+def load_latent_cache(path: Path) -> Tuple[torch.Tensor, torch.Tensor, str]:
+    d = torch.load(path, map_location="cpu", weights_only=False)
+    return d["X"], d["Y"], d.get("rep_mode", "mean")
+
+
+# -------------------------
+# main
+# -------------------------
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset-root", type=Path, default=Path("datasets/raw"))
-    parser.add_argument("--use-force", action="store_true")
-    parser.add_argument("--rep-mode", type=str, default="mean", choices=["mean", "last"])
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--val-ratio", type=float, default=0.2)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--epochs", type=int, default=200)
-    parser.add_argument("--lr", type=float, default=1e-2)
-    parser.add_argument("--weight-decay", type=float, default=0.0)
-    parser.add_argument("--out", type=Path, default=Path("outputs/probe_metrics.txt"))
-    parser.add_argument("--ckpt", type=Path, required=True)
-    parser.add_argument(
-        "--save-probe",
-        type=Path,
-        default=None,
-        help="学習済み probe の state_dict を保存するパス（任意）",
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dataset-root", required=True, type=str)
+    ap.add_argument("--ckpt", required=True, type=str)
+    ap.add_argument("--use-force", action="store_true")
+
+    ap.add_argument("--rep-mode", type=str, default="mean", choices=["mean", "last"])
+    ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--val-ratio", type=float, default=0.2)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--epochs", type=int, default=200)
+    ap.add_argument("--lr", type=float, default=1e-2)
+
+    ap.add_argument("--out", required=True, type=str)
+    ap.add_argument("--save-probe", required=True, type=str)
+    ap.add_argument("--norm-cfg", type=str, default=None)
+
+    # ---- speed knobs (no accuracy loss) ----
+    ap.add_argument("--num-workers", type=int, default=8)
+    ap.add_argument("--pin-memory", action="store_true", default=True)
+    ap.add_argument("--persistent-workers", action="store_true", default=True)
+    ap.add_argument("--prefetch-factor", type=int, default=4)
+
+    # ---- latent cache ----
+    ap.add_argument("--cache-latents", action="store_true",
+                    help="Precompute h_summary and train probe using cached features (fast).")
+    ap.add_argument("--cache-path", type=str, default="",
+                    help="Optional cache file path. Default: <outdir>/latent_cache_<rep>_<vp/vpf>.pt")
+    ap.add_argument("--rebuild-cache", action="store_true",
+                    help="Force rebuild cache even if exists.")
+
+    # optional early stopping (accuracy usually unchanged or better; set patience large if worried)
+    ap.add_argument("--early-stop", action="store_true")
+    ap.add_argument("--patience", type=int, default=30)
+
+    args = ap.parse_args()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    norm_cfg = load_norm_cfg(args.norm_cfg, args.ckpt)
+    if norm_cfg is None:
+        print("[WARN] norm_cfg not found. Probe training may be scale-mismatched (esp. for VPF).")
+    else:
+        print("[INFO] norm_cfg loaded (enabled=%s)" % str(norm_cfg.get("enabled", True)))
+
+    # dataset (EpisodeNPZDataset)
+    npz = sorted(Path(args.dataset_root).glob("*.npz"))
+    if not npz:
+        raise FileNotFoundError(f"no npz under: {args.dataset_root}")
+
+    cfg = build_dataset_cfg(seq_len=64, frame_skip=1, norm_cfg=norm_cfg)
+    ds = EpisodeNPZDataset(npz, config=cfg)
+
+    n_val = int(round(len(ds) * float(args.val_ratio)))
+    n_tr = len(ds) - n_val
+    ds_tr, ds_va = random_split(ds, [n_tr, n_val], generator=torch.Generator().manual_seed(args.seed))
+
+    # DataLoader speed options
+    # NOTE: persistent_workers requires num_workers>0
+    num_workers = int(args.num_workers)
+    persistent = bool(args.persistent_workers) and (num_workers > 0)
+
+    dl_tr = DataLoader(
+        ds_tr,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=bool(args.pin_memory),
+        persistent_workers=persistent,
+        prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else None,
+        collate_fn=collate_fixed_length,
+    )
+    dl_va = DataLoader(
+        ds_va,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=bool(args.pin_memory),
+        persistent_workers=persistent,
+        prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else None,
+        collate_fn=collate_fixed_length,
     )
 
-    args = parser.parse_args()
-
-    npz_files = sorted(args.dataset_root.glob("*.npz"))
-    if len(npz_files) < 2:
-        raise ValueError("probeには少なくとも2エピソード必要です（できれば複数(m,μ)）。")
-
-    # Dataset（EpisodeNPZDataset は npz_paths を渡す形式）
-    cfg = {"sequence_length": 64, "frame_skip": 1, "keys": {}}
-    dataset = EpisodeNPZDataset(npz_files, config=cfg)
-
-    tr_idx, val_idx = split_indices(len(dataset), args.val_ratio, args.seed)
-
-    # Subset相当（最小実装）
-    tr_paths = [npz_files[i] for i in tr_idx]
-    va_paths = [npz_files[i] for i in val_idx]
-    tr_ds = EpisodeNPZDataset(tr_paths, config=cfg)
-    va_ds = EpisodeNPZDataset(va_paths, config=cfg)
-
-    tr_loader = DataLoader(tr_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fixed_length)
-    va_loader = DataLoader(va_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fixed_length)
-
-    # 1バッチで次元推定
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    batch0 = next(iter(tr_loader))
-    batch0 = to_device(batch0, device)
-    j_dim = batch0["q"].shape[-1]
-    action_dim = batch0["action"].shape[-1]
+    # build world model
+    b0 = next(iter(dl_tr))
+    j_dim = int(b0["q"].shape[-1])
+    a_dim = int(b0["action"].shape[-1])
 
     if args.use_force:
-        wm = WorldModelVPF(j_dim=j_dim, action_dim=action_dim).to(device)
-        print("[INFO] Probe on VPF latent")
+        f_dim = int(b0["f"].shape[-1])
+        wm = WorldModelVPF(j_dim=j_dim, action_dim=a_dim, force_dim=f_dim).to(device)
+        wm_kind = "vpf"
     else:
-        wm = WorldModelVP(j_dim=j_dim, action_dim=action_dim).to(device)
-        print("[INFO] Probe on VP latent")
+        wm = WorldModelVP(j_dim=j_dim, action_dim=a_dim).to(device)
+        wm_kind = "vp"
 
-    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
-    wm.load_state_dict(state, strict=True)
+    ck = torch.load(args.ckpt, map_location=device, weights_only=False)
+    st = ck["model"] if isinstance(ck, dict) and "model" in ck else ck
+    wm.load_state_dict(st, strict=True)
     wm.eval()
 
-    # latent抽出（世界モデルは固定）
-    X_tr, Y_tr = extract_latent_and_targets(wm, tr_loader, device, args.rep_mode)
-    X_va, Y_va = extract_latent_and_targets(wm, va_loader, device, args.rep_mode)
+    # cache path
+    out_txt = Path(args.out)
+    out_txt.parent.mkdir(parents=True, exist_ok=True)
 
-    X_tr = X_tr.to(device)
-    Y_tr = Y_tr.to(device)
-    X_va = X_va.to(device)
-    Y_va = Y_va.to(device)
+    if args.cache_path:
+        cache_path = Path(args.cache_path)
+    else:
+        cache_path = out_txt.parent / f"latent_cache_{args.rep_mode}_{wm_kind}.pt"
 
-    probe = LinearProbe(in_dim=X_tr.shape[1], out_dim=2).to(device)
-    opt = torch.optim.Adam(probe.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    # -------------------------
+    # Option A: cache latents (fastest, no accuracy loss)
+    # -------------------------
+    if args.cache_latents:
+        if cache_path.exists() and not args.rebuild_cache:
+            X, Y, rep_in = load_latent_cache(cache_path)
+            if rep_in != args.rep_mode:
+                print(f"[WARN] cache rep_mode={rep_in} but args.rep_mode={args.rep_mode}. Rebuild recommended.")
+            print(f"[OK] loaded latent cache: {cache_path} (N={X.shape[0]}, Hdim={X.shape[1]})")
+        else:
+            # we need a loader over the FULL dataset in a deterministic order
+            dl_all = DataLoader(
+                ds,
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                pin_memory=bool(args.pin_memory),
+                persistent_workers=persistent,
+                prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else None,
+                collate_fn=collate_fixed_length,
+            )
+            X, Y = build_latent_cache(wm, dl_all, device=device, rep_mode=args.rep_mode, save_path=cache_path)
 
-    best_va = float("inf")
-    best_state = None
+        # split cached tensors using the SAME seed ratio
+        N = X.shape[0]
+        idx = torch.randperm(N, generator=torch.Generator().manual_seed(args.seed))
+        n_val2 = int(round(N * float(args.val_ratio)))
+        val_idx = idx[:n_val2]
+        tr_idx = idx[n_val2:]
+
+        Xtr, Ytr = X[tr_idx], Y[tr_idx]
+        Xva, Yva = X[val_idx], Y[val_idx]
+
+        ds_tr2 = TensorDataset(Xtr, Ytr)
+        ds_va2 = TensorDataset(Xva, Yva)
+
+        dl_tr2 = DataLoader(ds_tr2, batch_size=args.batch_size, shuffle=True, num_workers=0)
+        dl_va2 = DataLoader(ds_va2, batch_size=args.batch_size, shuffle=False, num_workers=0)
+
+        h_dim = int(X.shape[1])
+
+        probe = LinearProbe(h_dim).to(device)
+        opt = torch.optim.Adam(probe.parameters(), lr=args.lr)
+
+        def eval_loss_cached(dl):
+            probe.eval()
+            losses = []
+            with torch.no_grad():
+                for xb, yb in dl:
+                    xb = xb.to(device)
+                    yb = yb.to(device)
+                    yhat = probe(xb)
+                    loss = torch.mean((yhat - yb) ** 2)
+                    losses.append(float(loss.detach().cpu()))
+            return float(np.mean(losses)) if losses else float("nan")
+
+        best = float("inf")
+        best_ep = -1
+        bad = 0
+
+        for ep in range(1, args.epochs + 1):
+            probe.train()
+            for xb, yb in dl_tr2:
+                xb = xb.to(device)
+                yb = yb.to(device)
+                yhat = probe(xb)
+                loss = torch.mean((yhat - yb) ** 2)
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                opt.step()
+
+            va = eval_loss_cached(dl_va2)
+            if va < best:
+                best = va
+                best_ep = ep
+                bad = 0
+                payload = {
+                    "model": probe.state_dict(),
+                    "rep_mode": args.rep_mode,
+                    "use_force": bool(args.use_force),
+                    "ckpt": args.ckpt,
+                    "norm_cfg": norm_cfg,
+                    "cache_path": str(cache_path),
+                }
+                Path(args.save_probe).parent.mkdir(parents=True, exist_ok=True)
+                torch.save(payload, args.save_probe)
+            else:
+                bad += 1
+
+            if ep % 20 == 0 or ep == 1:
+                print(f"[probe-cached] epoch={ep:03d} val_mse={va:.6f} best={best:.6f} (best_ep={best_ep})")
+
+            if args.early_stop and bad >= int(args.patience):
+                print(f"[EARLY STOP] patience={args.patience} reached at epoch={ep} (best_ep={best_ep})")
+                break
+
+        out_txt.write_text(
+            f"ckpt={args.ckpt}\nprobe={args.save_probe}\nrep_mode={args.rep_mode}\nuse_force={args.use_force}\n"
+            f"cache_latents=True\ncache_path={cache_path}\n"
+            f"best_val_mse={best:.8f}\nbest_epoch={best_ep}\n",
+            encoding="utf-8",
+        )
+        print("[OK] saved:", out_txt)
+        print("[OK] saved probe:", args.save_probe)
+        return
+
+    # -------------------------
+    # Option B: no cache (still faster via DataLoader knobs)
+    # -------------------------
+    # infer h_dim
+    with torch.no_grad():
+        btmp = {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in b0.items()}
+        out = wm(btmp)
+        h_dim = int(out["h_seq"].shape[-1])
+
+    probe = LinearProbe(h_dim).to(device)
+    opt = torch.optim.Adam(probe.parameters(), lr=args.lr)
+
+    def eval_loss(dl):
+        probe.eval()
+        losses = []
+        with torch.no_grad():
+            for batch in dl:
+                batch = {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in batch.items()}
+                out = wm(batch)
+                h = summarize_latent(out["h_seq"], mode=args.rep_mode)
+                y = torch.stack([batch["mass"].float(), batch["friction"].float()], dim=1)
+                yhat = probe(h)
+                loss = torch.mean((yhat - y) ** 2)
+                losses.append(float(loss.detach().cpu()))
+        return float(np.mean(losses)) if losses else float("nan")
+
+    best = float("inf")
+    best_ep = -1
+    bad = 0
 
     for ep in range(1, args.epochs + 1):
         probe.train()
-        pred = probe(X_tr)
-        loss = torch.mean((pred - Y_tr) ** 2)
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
+        for batch in dl_tr:
+            batch = {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in batch.items()}
+            with torch.no_grad():
+                out = wm(batch)
+                h = summarize_latent(out["h_seq"], mode=args.rep_mode)
+            y = torch.stack([batch["mass"].float(), batch["friction"].float()], dim=1)
+
+            yhat = probe(h)
+            loss = torch.mean((yhat - y) ** 2)
+
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+
+        va = eval_loss(dl_va)
+        if va < best:
+            best = va
+            best_ep = ep
+            bad = 0
+            payload = {
+                "model": probe.state_dict(),
+                "rep_mode": args.rep_mode,
+                "use_force": bool(args.use_force),
+                "ckpt": args.ckpt,
+                "norm_cfg": norm_cfg,
+            }
+            Path(args.save_probe).parent.mkdir(parents=True, exist_ok=True)
+            torch.save(payload, args.save_probe)
+        else:
+            bad += 1
 
         if ep % 20 == 0 or ep == 1:
-            probe.eval()
-            with torch.no_grad():
-                pred_va = probe(X_va)
-                rmse_va = rmse(pred_va, Y_va).item()
-            if rmse_va < best_va:
-                best_va = rmse_va
-                best_state = {k: v.detach().cpu().clone() for k, v in probe.state_dict().items()}
-            print(f"[epoch {ep:4d}] train_mse={loss.item():.6f}  val_rmse={rmse_va:.6f}")
+            print(f"[probe] epoch={ep:03d} val_mse={va:.6f} best={best:.6f} (best_ep={best_ep})")
 
-    if best_state is not None:
-        probe.load_state_dict(best_state)
+        if args.early_stop and bad >= int(args.patience):
+            print(f"[EARLY STOP] patience={args.patience} reached at epoch={ep} (best_ep={best_ep})")
+            break
 
-    probe.eval()
-    with torch.no_grad():
-        pred_va = probe(X_va)
-        rmse_all = rmse(pred_va, Y_va)
-        mae_all = mae(pred_va, Y_va)
-        r2 = r2_score(pred_va, Y_va)
-
-        # 次元ごと（mass, friction）
-        rmse_dim = torch.mean((pred_va - Y_va) ** 2, dim=0).sqrt()
-        mae_dim = torch.mean(torch.abs(pred_va - Y_va), dim=0)
-
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    txt = []
-    txt.append(f"model: {'VPF' if args.use_force else 'VP'}")
-    txt.append(f"rep_mode: {args.rep_mode}")
-    txt.append(f"N_train={X_tr.shape[0]} N_val={X_va.shape[0]}")
-    txt.append(f"RMSE(all): {rmse_all.item():.6f}")
-    txt.append(f"MAE(all):  {mae_all.item():.6f}")
-    txt.append(f"R2(mass):     {r2[0].item():.6f}")
-    txt.append(f"R2(friction): {r2[1].item():.6f}")
-    txt.append(f"RMSE(mass):     {rmse_dim[0].item():.6f}")
-    txt.append(f"RMSE(friction): {rmse_dim[1].item():.6f}")
-    txt.append(f"MAE(mass):     {mae_dim[0].item():.6f}")
-    txt.append(f"MAE(friction): {mae_dim[1].item():.6f}")
-
-    out_str = "\n".join(txt)
-    args.out.write_text(out_str + "\n", encoding="utf-8")
-    print("\n" + out_str)
-    print(f"[OK] saved: {args.out}")
-
-    if args.save_probe is not None:
-        args.save_probe.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(
-            {
-                "model": probe.state_dict(),
-                "in_dim": int(X_tr.shape[1]),
-                "out_dim": 2,
-                "rep_mode": args.rep_mode,
-                "use_force": args.use_force,
-            },
-            args.save_probe,
-        )
-
-        print(f"[OK] saved probe: {args.save_probe}")
-
+    out_txt.write_text(
+        f"ckpt={args.ckpt}\nprobe={args.save_probe}\nrep_mode={args.rep_mode}\nuse_force={args.use_force}\n"
+        f"cache_latents=False\n"
+        f"best_val_mse={best:.8f}\nbest_epoch={best_ep}\n",
+        encoding="utf-8",
+    )
+    print("[OK] saved:", out_txt)
+    print("[OK] saved probe:", args.save_probe)
 
 
 if __name__ == "__main__":
