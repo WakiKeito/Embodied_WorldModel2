@@ -107,15 +107,31 @@ def torch_load_trusted(path: Path, map_location="cpu"):
 # -------------------------
 def load_norm_stats_from_ckpt_dir(ckpt_path: Path) -> Dict[str, Any]:
     """
-    Load normalization statistics dict from <ckpt_dir>/norm_cfg.json.
+    Priority:
+      1) ckpt["norm_cfg"] (embedded)
+      2) <ckpt_dir>/norm_cfg.json
+      3) <ckpt_dir>/*norm*.json (fallback)
     """
+    # 1) embedded
+    try:
+        ck = torch_load_trusted(ckpt_path, map_location="cpu")
+        if isinstance(ck, dict) and isinstance(ck.get("norm_cfg", None), dict):
+            return ck["norm_cfg"]
+    except Exception:
+        pass
+
+    # 2) file
     d = ckpt_path.parent
     cand = d / "norm_cfg.json"
     if cand.exists():
         return _load_json(cand)
+
+    # 3) fallback glob
     for p in d.glob("*norm*.json"):
         return _load_json(p)
-    raise FileNotFoundError(f"norm_cfg.json not found under: {d}")
+
+    raise FileNotFoundError(f"norm_cfg not found (neither embedded nor file) under: {d}")
+
 
 
 def build_dataset_cfg(seq_len: int, frame_skip: int, norm_stats: Optional[Dict[str, Any]]) -> Dict[str, Any]:

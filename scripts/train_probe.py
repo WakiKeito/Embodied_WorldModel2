@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-train_probe.py (fast, accuracy-preserving)
+train_probe.py (fast, accuracy-preserving; meta-safe + cache-safe)
 
-Speedups (no accuracy loss):
-1) Faster DataLoader (num_workers, pin_memory, persistent_workers, prefetch)
-2) Optional latent caching:
-   - Precompute h_summary (mean/last) for all episodes once using the frozen world model
-   - Train linear probe only on cached features (fast)
-
-Normalization:
-- same logic as your fixed version:
-  1) --norm-cfg
-  2) ckpt["norm_cfg"]
-  3) <ckpt_dir>/norm_cfg.json
+Fixes:
+1) Save probe_meta into probe checkpoint (so eval_probe can interpret targets consistently)
+2) Add cache/probe signature to detect stale/mismatched latent caches
+3) Store enough provenance into latent cache (dataset_root/ckpt/norm_cfg/use_force/etc.)
+4) Make --pin-memory a real toggle
+5) Fix a fatal typo: args.batch-size -> args.batch_size
+6) Allow disabling persistent workers (previous version forced True)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 
 import numpy as np
 import torch
@@ -72,6 +69,45 @@ def build_dataset_cfg(seq_len: int, frame_skip: int, norm_cfg: Optional[Dict]) -
 
 
 # -------------------------
+# provenance / signatures
+# -------------------------
+def _stable_json(obj: Any) -> str:
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def make_signature(
+    dataset_root: str,
+    ckpt: str,
+    use_force: bool,
+    rep_mode: str,
+    seq_len: int,
+    frame_skip: int,
+    norm_cfg: Optional[Dict],
+) -> str:
+    payload = {
+        "dataset_root": str(dataset_root),
+        "ckpt": str(ckpt),
+        "use_force": bool(use_force),
+        "rep_mode": str(rep_mode),
+        "seq_len": int(seq_len),
+        "frame_skip": int(frame_skip),
+        "norm_cfg": norm_cfg,
+    }
+    s = _stable_json(payload)
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()
+
+
+def default_probe_meta() -> Dict[str, Any]:
+    return {
+        "log_mass": False,
+        "standardize_y": False,
+        "has_y_mean": False,
+        "has_y_std": False,
+        "target_names": ["mass", "friction"],
+    }
+
+
+# -------------------------
 # model / probe
 # -------------------------
 def summarize_latent(h_seq: torch.Tensor, mode: str) -> torch.Tensor:
@@ -105,13 +141,14 @@ def build_latent_cache(
     device: torch.device,
     rep_mode: str,
     save_path: Path,
+    *,
+    dataset_root: str,
+    ckpt_path: str,
+    use_force: bool,
+    norm_cfg: Optional[Dict],
+    signature: str,
+    probe_meta: Dict[str, Any],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Compute h_summary for all batches in dl and save to disk.
-    Returns:
-      X: (N, Hdim)
-      Y: (N, 2)  [mass, friction]
-    """
     wm.eval()
 
     xs = []
@@ -120,10 +157,8 @@ def build_latent_cache(
     for batch in dl:
         batch = {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in batch.items()}
         out = wm(batch)
-        h = summarize_latent(out["h_seq"], mode=rep_mode)  # (B,Hdim)
-
+        h = summarize_latent(out["h_seq"], mode=rep_mode)  # (B,H)
         y = torch.stack([batch["mass"].float(), batch["friction"].float()], dim=1)  # (B,2)
-
         xs.append(h.detach().cpu())
         ys.append(y.detach().cpu())
 
@@ -136,6 +171,12 @@ def build_latent_cache(
             "X": X,
             "Y": Y,
             "rep_mode": rep_mode,
+            "dataset_root": str(dataset_root),
+            "ckpt": str(ckpt_path),
+            "use_force": bool(use_force),
+            "norm_cfg": norm_cfg,
+            "probe_meta": probe_meta,
+            "signature": str(signature),
         },
         save_path,
     )
@@ -143,9 +184,9 @@ def build_latent_cache(
     return X, Y
 
 
-def load_latent_cache(path: Path) -> Tuple[torch.Tensor, torch.Tensor, str]:
+def load_latent_cache(path: Path) -> Tuple[torch.Tensor, torch.Tensor, str, str]:
     d = torch.load(path, map_location="cpu", weights_only=False)
-    return d["X"], d["Y"], d.get("rep_mode", "mean")
+    return d["X"], d["Y"], d.get("rep_mode", "mean"), d.get("signature", "")
 
 
 # -------------------------
@@ -168,21 +209,23 @@ def main():
     ap.add_argument("--save-probe", required=True, type=str)
     ap.add_argument("--norm-cfg", type=str, default=None)
 
-    # ---- speed knobs (no accuracy loss) ----
+    # speed knobs
     ap.add_argument("--num-workers", type=int, default=8)
-    ap.add_argument("--pin-memory", action="store_true", default=True)
-    ap.add_argument("--persistent-workers", action="store_true", default=True)
+
+    ap.add_argument("--pin-memory", dest="pin_memory", action="store_true", default=True)
+    ap.add_argument("--no-pin-memory", dest="pin_memory", action="store_false")
+
+    # allow disabling persistent workers
+    ap.add_argument("--persistent-workers", dest="persistent_workers", action="store_true", default=True)
+    ap.add_argument("--no-persistent-workers", dest="persistent_workers", action="store_false")
+
     ap.add_argument("--prefetch-factor", type=int, default=4)
 
-    # ---- latent cache ----
-    ap.add_argument("--cache-latents", action="store_true",
-                    help="Precompute h_summary and train probe using cached features (fast).")
-    ap.add_argument("--cache-path", type=str, default="",
-                    help="Optional cache file path. Default: <outdir>/latent_cache_<rep>_<vp/vpf>.pt")
-    ap.add_argument("--rebuild-cache", action="store_true",
-                    help="Force rebuild cache even if exists.")
+    # latent cache
+    ap.add_argument("--cache-latents", action="store_true")
+    ap.add_argument("--cache-path", type=str, default="")
+    ap.add_argument("--rebuild-cache", action="store_true")
 
-    # optional early stopping (accuracy usually unchanged or better; set patience large if worried)
     ap.add_argument("--early-stop", action="store_true")
     ap.add_argument("--patience", type=int, default=30)
 
@@ -193,26 +236,28 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    probe_meta = default_probe_meta()
+
     norm_cfg = load_norm_cfg(args.norm_cfg, args.ckpt)
     if norm_cfg is None:
         print("[WARN] norm_cfg not found. Probe training may be scale-mismatched (esp. for VPF).")
     else:
-        print("[INFO] norm_cfg loaded (enabled=%s)" % str(norm_cfg.get("enabled", True)))
+        print(f"[INFO] norm_cfg loaded (enabled={norm_cfg.get('enabled', True)})")
 
-    # dataset (EpisodeNPZDataset)
     npz = sorted(Path(args.dataset_root).glob("*.npz"))
     if not npz:
         raise FileNotFoundError(f"no npz under: {args.dataset_root}")
 
-    cfg = build_dataset_cfg(seq_len=64, frame_skip=1, norm_cfg=norm_cfg)
+    SEQ_LEN = 64
+    FRAME_SKIP = 1
+
+    cfg = build_dataset_cfg(seq_len=SEQ_LEN, frame_skip=FRAME_SKIP, norm_cfg=norm_cfg)
     ds = EpisodeNPZDataset(npz, config=cfg)
 
     n_val = int(round(len(ds) * float(args.val_ratio)))
     n_tr = len(ds) - n_val
     ds_tr, ds_va = random_split(ds, [n_tr, n_val], generator=torch.Generator().manual_seed(args.seed))
 
-    # DataLoader speed options
-    # NOTE: persistent_workers requires num_workers>0
     num_workers = int(args.num_workers)
     persistent = bool(args.persistent_workers) and (num_workers > 0)
 
@@ -223,7 +268,7 @@ def main():
         num_workers=num_workers,
         pin_memory=bool(args.pin_memory),
         persistent_workers=persistent,
-        prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else None,
+        prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else 2,
         collate_fn=collate_fixed_length,
     )
     dl_va = DataLoader(
@@ -233,16 +278,17 @@ def main():
         num_workers=num_workers,
         pin_memory=bool(args.pin_memory),
         persistent_workers=persistent,
-        prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else None,
+        prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else 2,
         collate_fn=collate_fixed_length,
     )
 
-    # build world model
     b0 = next(iter(dl_tr))
     j_dim = int(b0["q"].shape[-1])
     a_dim = int(b0["action"].shape[-1])
 
     if args.use_force:
+        if "f" not in b0:
+            raise KeyError("use_force=True but batch has no 'f'. Check dataset/transforms.")
         f_dim = int(b0["f"].shape[-1])
         wm = WorldModelVPF(j_dim=j_dim, action_dim=a_dim, force_dim=f_dim).to(device)
         wm_kind = "vpf"
@@ -255,7 +301,6 @@ def main():
     wm.load_state_dict(st, strict=True)
     wm.eval()
 
-    # cache path
     out_txt = Path(args.out)
     out_txt.parent.mkdir(parents=True, exist_ok=True)
 
@@ -264,17 +309,34 @@ def main():
     else:
         cache_path = out_txt.parent / f"latent_cache_{args.rep_mode}_{wm_kind}.pt"
 
+    signature = make_signature(
+        dataset_root=args.dataset_root,
+        ckpt=args.ckpt,
+        use_force=bool(args.use_force),
+        rep_mode=args.rep_mode,
+        seq_len=SEQ_LEN,
+        frame_skip=FRAME_SKIP,
+        norm_cfg=norm_cfg,
+    )
+
     # -------------------------
-    # Option A: cache latents (fastest, no accuracy loss)
+    # Option A: cache latents
     # -------------------------
     if args.cache_latents:
+        need_rebuild = bool(args.rebuild_cache)
+
         if cache_path.exists() and not args.rebuild_cache:
-            X, Y, rep_in = load_latent_cache(cache_path)
+            X, Y, rep_in, sig_in = load_latent_cache(cache_path)
             if rep_in != args.rep_mode:
                 print(f"[WARN] cache rep_mode={rep_in} but args.rep_mode={args.rep_mode}. Rebuild recommended.")
-            print(f"[OK] loaded latent cache: {cache_path} (N={X.shape[0]}, Hdim={X.shape[1]})")
-        else:
-            # we need a loader over the FULL dataset in a deterministic order
+                need_rebuild = True
+            if sig_in != signature:
+                print("[WARN] latent cache signature mismatch. Rebuild required.")
+                need_rebuild = True
+            if not need_rebuild:
+                print(f"[OK] loaded latent cache: {cache_path} (N={X.shape[0]}, Hdim={X.shape[1]})")
+
+        if (not cache_path.exists()) or need_rebuild:
             dl_all = DataLoader(
                 ds,
                 batch_size=args.batch_size,
@@ -282,12 +344,23 @@ def main():
                 num_workers=num_workers,
                 pin_memory=bool(args.pin_memory),
                 persistent_workers=persistent,
-                prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else None,
+                prefetch_factor=int(args.prefetch_factor) if num_workers > 0 else 2,
                 collate_fn=collate_fixed_length,
             )
-            X, Y = build_latent_cache(wm, dl_all, device=device, rep_mode=args.rep_mode, save_path=cache_path)
+            X, Y = build_latent_cache(
+                wm,
+                dl_all,
+                device=device,
+                rep_mode=args.rep_mode,
+                save_path=cache_path,
+                dataset_root=args.dataset_root,
+                ckpt_path=args.ckpt,
+                use_force=bool(args.use_force),
+                norm_cfg=norm_cfg,
+                signature=signature,
+                probe_meta=probe_meta,
+            )
 
-        # split cached tensors using the SAME seed ratio
         N = X.shape[0]
         idx = torch.randperm(N, generator=torch.Generator().manual_seed(args.seed))
         n_val2 = int(round(N * float(args.val_ratio)))
@@ -304,7 +377,6 @@ def main():
         dl_va2 = DataLoader(ds_va2, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
         h_dim = int(X.shape[1])
-
         probe = LinearProbe(h_dim).to(device)
         opt = torch.optim.Adam(probe.parameters(), lr=args.lr)
 
@@ -347,6 +419,8 @@ def main():
                     "ckpt": args.ckpt,
                     "norm_cfg": norm_cfg,
                     "cache_path": str(cache_path),
+                    "probe_meta": probe_meta,
+                    "signature": signature,
                 }
                 Path(args.save_probe).parent.mkdir(parents=True, exist_ok=True)
                 torch.save(payload, args.save_probe)
@@ -363,6 +437,7 @@ def main():
         out_txt.write_text(
             f"ckpt={args.ckpt}\nprobe={args.save_probe}\nrep_mode={args.rep_mode}\nuse_force={args.use_force}\n"
             f"cache_latents=True\ncache_path={cache_path}\n"
+            f"signature={signature}\n"
             f"best_val_mse={best:.8f}\nbest_epoch={best_ep}\n",
             encoding="utf-8",
         )
@@ -371,9 +446,8 @@ def main():
         return
 
     # -------------------------
-    # Option B: no cache (still faster via DataLoader knobs)
+    # Option B: no cache
     # -------------------------
-    # infer h_dim
     with torch.no_grad():
         btmp = {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in b0.items()}
         out = wm(btmp)
@@ -427,6 +501,8 @@ def main():
                 "use_force": bool(args.use_force),
                 "ckpt": args.ckpt,
                 "norm_cfg": norm_cfg,
+                "probe_meta": probe_meta,
+                "signature": signature,
             }
             Path(args.save_probe).parent.mkdir(parents=True, exist_ok=True)
             torch.save(payload, args.save_probe)
@@ -443,6 +519,7 @@ def main():
     out_txt.write_text(
         f"ckpt={args.ckpt}\nprobe={args.save_probe}\nrep_mode={args.rep_mode}\nuse_force={args.use_force}\n"
         f"cache_latents=False\n"
+        f"signature={signature}\n"
         f"best_val_mse={best:.8f}\nbest_epoch={best_ep}\n",
         encoding="utf-8",
     )

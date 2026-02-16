@@ -7,7 +7,7 @@
   "T": 80,
   "push_mode": "vel",
   "push_ee_speed": 0.03,
-  "require_ok_per_condition": 1,
+  "require_ok_per_condition": 8,
   "conditions": [
     [
       0.05,
@@ -117,7 +117,7 @@
     {
       "mass": 0.05,
       "friction": 0.2,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -126,7 +126,7 @@
     {
       "mass": 0.05,
       "friction": 0.35,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -135,7 +135,7 @@
     {
       "mass": 0.05,
       "friction": 0.5,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -144,7 +144,7 @@
     {
       "mass": 0.05,
       "friction": 0.65,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -153,7 +153,7 @@
     {
       "mass": 0.05,
       "friction": 0.8,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -162,7 +162,7 @@
     {
       "mass": 0.2,
       "friction": 0.2,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -171,7 +171,7 @@
     {
       "mass": 0.2,
       "friction": 0.35,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -180,7 +180,7 @@
     {
       "mass": 0.2,
       "friction": 0.5,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -189,7 +189,7 @@
     {
       "mass": 0.2,
       "friction": 0.65,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -198,7 +198,7 @@
     {
       "mass": 0.2,
       "friction": 0.8,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -207,7 +207,7 @@
     {
       "mass": 1.0,
       "friction": 0.2,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -216,7 +216,7 @@
     {
       "mass": 1.0,
       "friction": 0.35,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -225,7 +225,7 @@
     {
       "mass": 1.0,
       "friction": 0.5,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -234,7 +234,7 @@
     {
       "mass": 1.0,
       "friction": 0.65,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -243,7 +243,7 @@
     {
       "mass": 1.0,
       "friction": 0.8,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -252,7 +252,7 @@
     {
       "mass": 10.0,
       "friction": 0.2,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -261,7 +261,7 @@
     {
       "mass": 10.0,
       "friction": 0.35,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -270,7 +270,7 @@
     {
       "mass": 10.0,
       "friction": 0.5,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -279,7 +279,7 @@
     {
       "mass": 10.0,
       "friction": 0.65,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -288,7 +288,7 @@
     {
       "mass": 10.0,
       "friction": 0.8,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -297,7 +297,7 @@
     {
       "mass": 20.0,
       "friction": 0.2,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -306,7 +306,7 @@
     {
       "mass": 20.0,
       "friction": 0.35,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -315,7 +315,7 @@
     {
       "mass": 20.0,
       "friction": 0.5,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -324,7 +324,7 @@
     {
       "mass": 20.0,
       "friction": 0.65,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,
@@ -333,7 +333,7 @@
     {
       "mass": 20.0,
       "friction": 0.8,
-      "ok_existing": 0,
+      "ok_existing": 7,
       "ok_added": 1,
       "bad_added": 0,
       "attempts": 1,

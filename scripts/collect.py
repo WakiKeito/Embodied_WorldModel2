@@ -205,10 +205,9 @@ def train_conditions() -> List[Tuple[float, float]]:
     return [(m, mu) for m in m_list for mu in mu_list]
 
 def intrap_conditions() -> List[Tuple[float, float]]:
-    m_list = [0.65, 1.0, 1.4, 1.9]
+    m_list  = [0.12, 0.5, 3.0, 15.0]
     mu_list = [0.275, 0.425, 0.575, 0.725]
-    conds = [(m, mu) for m in m_list for mu in mu_list]
-    return conds[:12]
+    return [(m, mu) for m in m_list for mu in mu_list]
 
 def extrap_conditions() -> List[Tuple[float, float]]:
     m_list  = [0.02, 0.03, 0.04, 25.0, 30.0, 40.0]
