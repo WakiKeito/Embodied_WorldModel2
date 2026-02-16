@@ -7,167 +7,219 @@
   "T": 80,
   "push_mode": "vel",
   "push_ee_speed": 0.03,
-  "require_ok_per_condition": 1,
+  "require_ok_per_condition": 30,
   "conditions": [
     [
-      0.65,
+      0.12,
       0.275
     ],
     [
-      0.65,
+      0.12,
       0.425
     ],
     [
-      0.65,
+      0.12,
       0.575
     ],
     [
-      0.65,
+      0.12,
       0.725
     ],
     [
-      1.0,
+      0.5,
       0.275
     ],
     [
-      1.0,
+      0.5,
       0.425
     ],
     [
-      1.0,
+      0.5,
       0.575
     ],
     [
-      1.0,
+      0.5,
       0.725
     ],
     [
-      1.4,
+      3.0,
       0.275
     ],
     [
-      1.4,
+      3.0,
       0.425
     ],
     [
-      1.4,
+      3.0,
       0.575
     ],
     [
-      1.4,
+      3.0,
+      0.725
+    ],
+    [
+      15.0,
+      0.275
+    ],
+    [
+      15.0,
+      0.425
+    ],
+    [
+      15.0,
+      0.575
+    ],
+    [
+      15.0,
       0.725
     ]
   ],
-  "good_count": 12,
+  "good_count": 480,
   "bad_count": 0,
-  "attempt_count": 12,
+  "attempt_count": 480,
   "per_condition": [
     {
-      "mass": 0.65,
+      "mass": 0.12,
       "friction": 0.275,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 0.65,
+      "mass": 0.12,
       "friction": 0.425,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 0.65,
+      "mass": 0.12,
       "friction": 0.575,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 0.65,
+      "mass": 0.12,
       "friction": 0.725,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 1.0,
+      "mass": 0.5,
       "friction": 0.275,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 1.0,
+      "mass": 0.5,
       "friction": 0.425,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 1.0,
+      "mass": 0.5,
       "friction": 0.575,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 1.0,
+      "mass": 0.5,
       "friction": 0.725,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 1.4,
+      "mass": 3.0,
       "friction": 0.275,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 1.4,
+      "mass": 3.0,
       "friction": 0.425,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 1.4,
+      "mass": 3.0,
       "friction": 0.575,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
       "done": true
     },
     {
-      "mass": 1.4,
+      "mass": 3.0,
       "friction": 0.725,
       "ok_existing": 0,
-      "ok_added": 1,
+      "ok_added": 30,
       "bad_added": 0,
-      "attempts": 1,
+      "attempts": 30,
+      "done": true
+    },
+    {
+      "mass": 15.0,
+      "friction": 0.275,
+      "ok_existing": 0,
+      "ok_added": 30,
+      "bad_added": 0,
+      "attempts": 30,
+      "done": true
+    },
+    {
+      "mass": 15.0,
+      "friction": 0.425,
+      "ok_existing": 0,
+      "ok_added": 30,
+      "bad_added": 0,
+      "attempts": 30,
+      "done": true
+    },
+    {
+      "mass": 15.0,
+      "friction": 0.575,
+      "ok_existing": 0,
+      "ok_added": 30,
+      "bad_added": 0,
+      "attempts": 30,
+      "done": true
+    },
+    {
+      "mass": 15.0,
+      "friction": 0.725,
+      "ok_existing": 0,
+      "ok_added": 30,
+      "bad_added": 0,
+      "attempts": 30,
       "done": true
     }
   ],
